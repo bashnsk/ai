@@ -30,6 +30,23 @@ class Orchestrator:
         with open(self.task_dir / "events.log", "a", encoding="utf-8") as f:
             f.write(f"[{ts}] [{node_id}] {message}\n")
 
+    def _normalize_nodes(self, raw_nodes: dict, fallback_goal: str) -> dict:
+        if not isinstance(raw_nodes, dict) or not raw_nodes:
+            return {"node_1": {"title": f"{fallback_goal} (сохранить в artifacts/final_report.md)", "type": "ATOMIC", "status": "PENDING", "attempts": 0, "dependencies": []}}
+        clean = {}
+        for nid, node in raw_nodes.items():
+            if not isinstance(node, dict):
+                continue
+            deps = [d for d in node.get("dependencies", []) if isinstance(d, str) and d in raw_nodes]
+            clean[str(nid)] = {
+                "title": str(node.get("title", fallback_goal)),
+                "type": "ATOMIC",
+                "status": "PENDING",
+                "attempts": 0,
+                "dependencies": deps
+            }
+        return clean or {"node_1": {"title": f"{fallback_goal} (сохранить в artifacts/final_report.md)", "type": "ATOMIC", "status": "PENDING", "attempts": 0, "dependencies": []}}
+
     def _try_fast_path(self, tree: dict) -> bool:
         uploads_dir = self.task_dir / "uploads"
         files = [f for f in uploads_dir.iterdir() if f.is_file()] if uploads_dir.exists() else []
@@ -37,14 +54,14 @@ class Orchestrator:
             total_size = sum(f.stat().st_size for f in files)
             exts = {f.suffix.lower() for f in files}
             if exts.issubset(IMAGE_EXTS):
-                title = f"Проанализировать распознанный текст изображений ({', '.join(f.name for f in files)}) по запросу '{tree['goal']}' и сохранить ответ в artifacts/final_report.md"
-                tree["nodes"] = {"node_1": {"title": title, "type": "ATOMIC", "status": "PENDING", "attempts": 0, "dependencies": []}}
-                self.log_event("ROUTER", f"Fast-Path (Изображения): создан 1 узел без вызова Архитектора.")
+                title = f"Проанализировать изображения ({', '.join(f.name for f in files)}) по запросу '{tree['goal']}' и сохранить ответ в artifacts/final_report.md"
+                tree["nodes"] = self._normalize_nodes({"node_1": {"title": title}}, tree["goal"])
+                self.log_event("ROUTER", "Fast-Path (Изображения): создан 1 узел.")
                 return True
             if total_size < 16000:
-                title = f"Изучить содержимое файлов ({', '.join(f.name for f in files)}), ответить на вопрос '{tree['goal']}' и сохранить результат в artifacts/final_report.md"
-                tree["nodes"] = {"node_1": {"title": title, "type": "ATOMIC", "status": "PENDING", "attempts": 0, "dependencies": []}}
-                self.log_event("ROUTER", f"Fast-Path (Файлы {total_size} Б): создан 1 узел без вызова Архитектора.")
+                title = f"Изучить содержимое файлов ({', '.join(f.name for f in files)}), ответить на вопрос '{tree['goal']}' и сохранить в artifacts/final_report.md"
+                tree["nodes"] = self._normalize_nodes({"node_1": {"title": title}}, tree["goal"])
+                self.log_event("ROUTER", f"Fast-Path (Файлы {total_size} Б): создан 1 узел.")
                 return True
         return False
 
@@ -67,19 +84,20 @@ class Orchestrator:
         raw_plan = call_agent("architect", arch_sys, prompt, stop_flag=self.stop_flag, model_override=selected_model)
         match = re.search(r"```json\n(.*?)```", raw_plan, flags=re.DOTALL)
         try:
-            tree["nodes"] = json.loads(match.group(1).strip() if match else raw_plan.strip())["nodes"]
+            parsed = json.loads(match.group(1).strip() if match else raw_plan.strip(), strict=False)
+            tree["nodes"] = self._normalize_nodes(parsed.get("nodes", {}), tree["goal"])
             tree["status"] = "IN_PROGRESS"
         except Exception as e:
             self.log_event("ARCHITECT", f"Ошибка JSON ({e}), создаю единый узел.")
-            tree["nodes"] = {"node_1": {"title": f"{tree['goal']} (сохранить в artifacts/final_report.md)", "type": "ATOMIC", "status": "PENDING", "attempts": 0, "dependencies": []}}
+            tree["nodes"] = self._normalize_nodes({}, tree["goal"])
         self.save_tree(tree)
         self.log_event("ARCHITECT", f"Создано узлов: {len(tree['nodes'])}.")
 
     def get_ready_node(self, tree: dict):
         nodes = tree["nodes"]
         for nid, node in nodes.items():
-            if node["type"] == "ATOMIC" and node["status"] in ["PENDING", "RETRY"]:
-                if all(nodes[d]["status"] == "DONE" for d in node.get("dependencies", [])):
+            if node.get("type") == "ATOMIC" and node.get("status") in ["PENDING", "RETRY"]:
+                if all(nodes[d].get("status") == "DONE" for d in node.get("dependencies", []) if d in nodes):
                     return nid, node
         return None, None
 
@@ -98,8 +116,8 @@ class Orchestrator:
                 tree = self.load_tree()
                 node_id, node = self.get_ready_node(tree)
                 if not node:
-                    statuses = [n["status"] for n in tree["nodes"].values() if n["type"] == "ATOMIC"]
-                    if all(s == "DONE" for s in statuses):
+                    statuses = [n.get("status") for n in tree["nodes"].values() if n.get("type") == "ATOMIC"]
+                    if statuses and all(s == "DONE" for s in statuses):
                         tree["status"] = "COMPLETED"
                         self.save_tree(tree)
                         self.log_event("SYSTEM", "Все задачи выполнены!")
@@ -107,7 +125,7 @@ class Orchestrator:
                         break
 
                     if any(s == "FAILED" for s in statuses):
-                        fid = next(k for k, v in tree["nodes"].items() if v["status"] == "FAILED")
+                        fid = next(k for k, v in tree["nodes"].items() if v.get("status") == "FAILED")
                         crit_f = self.nodes_dir / fid / "critique.md"
                         crit = crit_f.read_text(encoding="utf-8") if crit_f.exists() else "Ошибка"
                         self.failed_strategies.append(f"Шаг '{tree['nodes'][fid]['title']}' -> {crit[:300]}")
@@ -121,7 +139,7 @@ class Orchestrator:
             tree = self.load_tree()
             tree["status"] = "STOPPED"
             for n in tree.get("nodes", {}).values():
-                if n["status"] == "IN_PROGRESS":
+                if n.get("status") == "IN_PROGRESS":
                     n["status"] = "STOPPED"
             self.save_tree(tree)
             self.log_event("SYSTEM", "Задача остановлена пользователем.")
