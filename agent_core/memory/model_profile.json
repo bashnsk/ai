@@ -1,0 +1,23 @@
+{
+  "architect": {
+    "model": "qwen2.5:14b",
+    "num_ctx": 16384
+  },
+  "critic": {
+    "model": "qwen2.5:14b",
+    "num_ctx": 16384
+  },
+  "worker_code": {
+    "model": "qwen2.5-coder:14b",
+    "num_ctx": 32768
+  },
+  "worker_general": {
+    "model": "qwen2.5:14b",
+    "num_ctx": 16384
+  },
+  "optimizer": {
+    "model": "llama3.1:latest",
+    "num_ctx": 8192
+  },
+  "vision": "qwen2.5vl:7b"
+}

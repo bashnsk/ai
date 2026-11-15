@@ -37,6 +37,7 @@
                 </div>
                 <div style="display: flex; align-items: center; gap: 10px; flex-shrink: 0;">
                     <span id="globalStatus" class="badge">IDLE</span>
+                    <button id="rerunBtn" class="btn-clear" style="display: none; background: #0284c7; color: #fff; padding: 6px 14px;" onclick="rerunCurrentTask()" title="Запустить снова с выбранной в списке моделью">Повторить</button>
                     <button id="stopBtn" class="btn-stop" style="display: none;" onclick="stopCurrentTask()">СТОП</button>
                 </div>
             </div>
@@ -59,6 +60,6 @@
         </div>
     </div>
 </div>
-<script src="/static/app.js?v=2"></script>
+<script src="/static/app.js?v=4"></script>
 </body>
 </html>

@@ -1,6 +1,7 @@
 import json
 import re
 import threading
+from datetime import datetime
 from config import MEMORY_DIR, SYSTEM_DIR
 from llm_client import call_agent
 
@@ -81,15 +82,17 @@ class MemoryManager:
             report += f"\n--- {nid}: {node['title']} ---\n{res_txt}\n"
 
         raw_opt = call_agent("optimizer", opt_sys, report, model_override=selected_model)
-        match = re.search(r"```json\n(.*?)```", raw_opt, flags=re.DOTALL)
-        json_str = match.group(1).strip() if match else raw_opt.strip()
+        json_match = re.search(r"```json\n(.*?)```", raw_opt, flags=re.DOTALL)
+        md_match = re.search(r"```markdown\n(.*?)```", raw_opt, flags=re.DOTALL)
 
         try:
-            data = json.loads(json_str)
+            data = json.loads(json_match.group(1).strip() if json_match else raw_opt.strip(), strict=False)
             if not data.get("should_save"):
                 return "Новых уникальных паттернов не выявлено."
-            skill_id = re.sub(r"[^a-zA-Z0-9_]", "_", data["skill_id"])
-            (MEMORY_DIR / "skills" / f"{skill_id}.md").write_text(data["recipe"], encoding="utf-8")
+            raw_id = re.sub(r"[^a-zA-Z0-9_]", "_", data.get("skill_id", "")).strip("_")
+            skill_id = raw_id if raw_id else f"skill_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            recipe_text = md_match.group(1).strip() if md_match else data.get("recipe", "")
+            (MEMORY_DIR / "skills" / f"{skill_id}.md").write_text(recipe_text, encoding="utf-8")
 
             index_data = self._load_index()
             index_data["skills"] = [s for s in index_data["skills"] if s["skill_id"] != skill_id]

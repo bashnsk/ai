@@ -54,6 +54,7 @@ function resetMainView() {
     document.getElementById('currentModelTag').innerText = '';
     document.getElementById('globalStatus').innerText = 'IDLE';
     document.getElementById('stopBtn').style.display = 'none';
+    document.getElementById('rerunBtn').style.display = 'none';
     document.getElementById('finalResultBox').innerHTML = '';
     document.getElementById('nodesContainer').innerHTML = '';
     document.getElementById('logsContainer').innerText = 'Ожидание...';
@@ -74,6 +75,20 @@ async function deleteSingleTask(e, id) {
 
 async function stopCurrentTask() { if (currentTaskId) { await fetch(`/api/tasks/${currentTaskId}/stop`, { method: 'POST' }); updateTaskDetails(); } }
 
+async function rerunCurrentTask() {
+    if (!currentTaskId) return;
+    const model = document.getElementById('modelSelect').value;
+    const data = await (await fetch(`/api/tasks/${currentTaskId}/rerun`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({model})
+    })).json();
+    if (data.task_id) {
+        await fetchTasks();
+        selectTask(data.task_id);
+    }
+}
+
 async function fetchTasks() {
     const data = await (await fetch('/api/tasks')).json();
     document.getElementById('taskList').innerHTML = data.tasks.map(t => `
@@ -87,7 +102,7 @@ async function fetchTasks() {
     </div>
     <div class="task-goal">${t.goal}</div>
     </div>`).join('');
-    if (!currentTaskId && data.tasks.length > 0) selectTask(data.tasks[0].id);
+    if (!currentTaskId && data.tasks.length > 0) selectTask(data.tasks.id);
 }
 
 async function createTask() {
@@ -123,9 +138,11 @@ async function updateTaskDetails() {
     document.getElementById('currentModelTag').innerText = (tree.model ? `Режим: ${tree.model}` : '') + filesTag;
     document.getElementById('globalStatus').innerText = tree.status;
 
+    const isRunning = ['IN_PROGRESS', 'STOPPING...'].includes(tree.status);
     const stopBtn = document.getElementById('stopBtn');
-    stopBtn.style.display = ['IN_PROGRESS', 'STOPPING...'].includes(tree.status) ? 'inline-block' : 'none';
+    stopBtn.style.display = isRunning ? 'inline-block' : 'none';
     stopBtn.innerText = tree.status === 'STOPPING...' ? 'Остановка...' : 'СТОП';
+    document.getElementById('rerunBtn').style.display = isRunning ? 'none' : 'inline-block';
 
     document.getElementById('finalResultBox').innerHTML = data.final_report ? `
     <div class="result-card"><h3 style="color:#6ee7b7; margin-bottom:10px;">Итоговый результат</h3><div class="result-body">${formatLinks(data.final_report)}</div></div>` : '';
