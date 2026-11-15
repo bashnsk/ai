@@ -1,12 +1,12 @@
 import json
-import uuid
 import shutil
 import threading
+from datetime import datetime
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from config import WORKSPACE_DIR, BASE_DIR
+from config import WORKSPACE_DIR, BASE_DIR, MEMORY_DIR
 from orchestrator import Orchestrator
 
 app = FastAPI(title="Agent Core Orchestrator")
@@ -40,7 +40,13 @@ def index():
 
 @app.post("/api/tasks")
 def create_task(req: TaskRequest):
-    task_id = f"task_{uuid.uuid4().hex[:6]}"
+    base_id = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    task_id = base_id
+    counter = 1
+    while (WORKSPACE_DIR / task_id).exists():
+        task_id = f"{base_id}_{counter}"
+        counter += 1
+
     task_dir = WORKSPACE_DIR / task_id
     (task_dir / "artifacts").mkdir(parents=True, exist_ok=True)
     (task_dir / "nodes").mkdir(parents=True, exist_ok=True)
@@ -59,7 +65,6 @@ def stop_task(task_id: str):
     task_dir = WORKSPACE_DIR / task_id
     if not task_dir.exists():
         return {"error": "Task not found"}
-
     (task_dir / "stop.flag").write_text("STOP", encoding="utf-8")
     tree_path = task_dir / "tree.json"
     if tree_path.exists():
@@ -88,8 +93,18 @@ def clear_old_tasks():
 @app.get("/api/tasks")
 def list_tasks():
     WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
-    tasks = [d.name for d in WORKSPACE_DIR.iterdir() if d.is_dir()]
-    return {"tasks": sorted(tasks, reverse=True)}
+    items = []
+    for d in sorted(WORKSPACE_DIR.iterdir(), reverse=True):
+        if not d.is_dir():
+            continue
+        tree_path = d / "tree.json"
+        goal, status = d.name, "UNKNOWN"
+        if tree_path.exists():
+            tree = json.loads(tree_path.read_text(encoding="utf-8"))
+            goal = tree.get("goal", d.name)
+            status = tree.get("status", "UNKNOWN")
+        items.append({"id": d.name, "goal": goal, "status": status})
+    return {"tasks": items}
 
 
 @app.get("/api/tasks/{task_id}")
@@ -106,18 +121,52 @@ def get_task_status(task_id: str):
     if nodes_dir.exists():
         for nd in nodes_dir.iterdir():
             if nd.is_dir():
-                res_f = nd / "result.md"
-                crit_f = nd / "critique.md"
+                res_f, crit_f = nd / "result.md", nd / "critique.md"
                 node_details[nd.name] = {
                     "result": res_f.read_text(encoding="utf-8") if res_f.exists() else "",
                     "critique": crit_f.read_text(encoding="utf-8") if crit_f.exists() else ""
                 }
 
-    artifacts_dir = task_dir / "artifacts"
-    artifacts = {}
-    if artifacts_dir.exists():
-        for f in sorted(artifacts_dir.iterdir()):
-            if f.is_file():
-                artifacts[f.name] = f.read_text(encoding="utf-8", errors="ignore")[:8000]
+    report_file = task_dir / "artifacts" / "final_report.md"
+    final_report = report_file.read_text(encoding="utf-8", errors="ignore") if report_file.exists() else ""
+    return {"tree": tree, "logs": logs, "node_details": node_details, "final_report": final_report}
 
-    return {"tree": tree, "logs": logs, "node_details": node_details, "artifacts": artifacts}
+
+@app.get("/api/memory")
+def get_memory():
+    index_path = MEMORY_DIR / "index.json"
+    skills = []
+    if index_path.exists():
+        data = json.loads(index_path.read_text(encoding="utf-8"))
+        for s in data.get("skills", []):
+            sf = MEMORY_DIR / "skills" / f"{s['skill_id']}.md"
+            skills.append({**s, "recipe": sf.read_text(encoding="utf-8") if sf.exists() else ""})
+
+    anti_dir = MEMORY_DIR / "anti_patterns"
+    anti = []
+    if anti_dir.exists():
+        for f in sorted(anti_dir.iterdir(), reverse=True):
+            if f.is_file():
+                anti.append({"id": f.name, "content": f.read_text(encoding="utf-8")})
+    return {"skills": skills, "anti_patterns": anti}
+
+
+@app.delete("/api/memory/skills/{skill_id}")
+def delete_skill(skill_id: str):
+    index_path = MEMORY_DIR / "index.json"
+    if index_path.exists():
+        data = json.loads(index_path.read_text(encoding="utf-8"))
+        data["skills"] = [s for s in data.get("skills", []) if s["skill_id"] != skill_id]
+        index_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    sf = MEMORY_DIR / "skills" / f"{skill_id}.md"
+    if sf.exists():
+        sf.unlink()
+    return {"deleted": skill_id}
+
+
+@app.delete("/api/memory/anti_patterns/{file_name}")
+def delete_anti_pattern(file_name: str):
+    af = MEMORY_DIR / "anti_patterns" / file_name
+    if af.exists():
+        af.unlink()
+    return {"deleted": file_name}
