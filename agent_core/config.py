@@ -1,6 +1,6 @@
 from pathlib import Path
 
-BASE_DIR = Path("/home/sid/RAID/_AI/github/agent_core")
+BASE_DIR = Path(__file__).resolve().parent
 SYSTEM_DIR = BASE_DIR / "system"
 MEMORY_DIR = BASE_DIR / "memory"
 WORKSPACE_DIR = BASE_DIR / "workspace"
@@ -8,14 +8,18 @@ WORKSPACE_DIR = BASE_DIR / "workspace"
 OLLAMA_URL = "http://localhost:11434/api/chat"
 
 DEFAULT_MODEL = "qwen2.5-coder:14b"
+DEFAULT_NUM_CTX = 32768
 
-ROLE_MODELS = {
-    "architect": DEFAULT_MODEL,
-    "critic": DEFAULT_MODEL,
-    "worker_code": DEFAULT_MODEL,
-    "worker_general": DEFAULT_MODEL,
-    "curator": DEFAULT_MODEL,
-    "optimizer": DEFAULT_MODEL
+# Используется только при выборе режима "AUTO" (все роли строго на GPU: num_gpu = -1)
+ROLE_CONFIGS = {
+    "architect": {"model": "deepseek-r1:14b", "num_gpu": -1, "num_ctx": 16384},
+    "critic": {"model": "deepseek-r1:14b", "num_gpu": -1, "num_ctx": 16384},
+    "worker_code": {"model": "qwen2.5-coder:14b", "num_gpu": -1, "num_ctx": 32768},
+    "worker_general": {"model": "qwen2.5:14b", "num_gpu": -1, "num_ctx": 16384},
+    "curator": {"model": "qwen3.5:9b", "num_gpu": -1, "num_ctx": 8192},
+    "optimizer": {"model": "qwen3.5:9b", "num_gpu": -1, "num_ctx": 8192}
 }
+
+ROLE_MODELS = {k: v["model"] for k, v in ROLE_CONFIGS.items()}
 
 MAX_ATTEMPTS_PER_NODE = 3

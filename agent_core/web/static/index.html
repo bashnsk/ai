@@ -17,6 +17,8 @@
             <div class="card" style="margin-bottom: 20px;">
                 <h3>Новая задача</h3>
                 <textarea id="goalInput" placeholder="Опишите задачу..."></textarea>
+                <input type="file" id="fileInput" multiple style="margin-top: 8px; font-size: 12px; color: #94a3b8; width: 100%;">
+                <select id="modelSelect" style="width: 100%; margin-top: 10px; padding: 8px; background: #0f172a; color: #fff; border: 1px solid #475569; border-radius: 6px;"></select>
                 <button onclick="createTask()">Запустить агента</button>
             </div>
             <div class="card">
@@ -29,7 +31,10 @@
         </div>
         <div class="card">
             <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 12px;">
-                <h2 id="currentTitle" style="margin-bottom: 0;">Выберите или создайте задачу</h2>
+                <div>
+                    <h2 id="currentTitle" style="margin-bottom: 4px;">Выберите или создайте задачу</h2>
+                    <div id="currentModelTag" style="font-size: 12px; color: #94a3b8;"></div>
+                </div>
                 <div style="display: flex; align-items: center; gap: 10px; flex-shrink: 0;">
                     <span id="globalStatus" class="badge">IDLE</span>
                     <button id="stopBtn" class="btn-stop" style="display: none;" onclick="stopCurrentTask()">СТОП</button>
@@ -54,6 +59,6 @@
         </div>
     </div>
 </div>
-<script src="/static/app.js"></script>
+<script src="/static/app.js?v=2"></script>
 </body>
 </html>

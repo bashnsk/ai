@@ -2,11 +2,12 @@ import json
 import shutil
 import threading
 from datetime import datetime
-from fastapi import FastAPI
+from typing import Optional, List
+from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
-from config import WORKSPACE_DIR, BASE_DIR, MEMORY_DIR
+from config import WORKSPACE_DIR, BASE_DIR, MEMORY_DIR, DEFAULT_MODEL
+from llm_client import get_available_models
 from orchestrator import Orchestrator
 
 app = FastAPI(title="Agent Core Orchestrator")
@@ -17,7 +18,7 @@ app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
 
 @app.on_event("startup")
-def cleanup_stale_tasks():
+def mark_old_running_stopped():
     if not WORKSPACE_DIR.exists():
         return
     for task_dir in WORKSPACE_DIR.iterdir():
@@ -25,12 +26,8 @@ def cleanup_stale_tasks():
         if task_dir.is_dir() and tree_path.exists():
             tree = json.loads(tree_path.read_text(encoding="utf-8"))
             if tree.get("status") in ["IN_PROGRESS", "STOPPING..."]:
-                tree["status"] = "INTERRUPTED"
+                tree["status"] = "STOPPED"
                 tree_path.write_text(json.dumps(tree, indent=2, ensure_ascii=False), encoding="utf-8")
-
-
-class TaskRequest(BaseModel):
-    goal: str
 
 
 @app.get("/")
@@ -38,8 +35,17 @@ def index():
     return FileResponse(static_dir / "index.html")
 
 
+@app.get("/api/models")
+def list_models():
+    return {"models": get_available_models(), "default": "AUTO"}
+
+
 @app.post("/api/tasks")
-def create_task(req: TaskRequest):
+async def create_task(
+    goal: str = Form(...),
+    model: Optional[str] = Form("AUTO"),
+    files: Optional[List[UploadFile]] = File(None)
+):
     base_id = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     task_id = base_id
     counter = 1
@@ -50,9 +56,20 @@ def create_task(req: TaskRequest):
     task_dir = WORKSPACE_DIR / task_id
     (task_dir / "artifacts").mkdir(parents=True, exist_ok=True)
     (task_dir / "nodes").mkdir(parents=True, exist_ok=True)
-    (task_dir / "goal.md").write_text(req.goal, encoding="utf-8")
+    uploads_dir = task_dir / "uploads"
+    uploads_dir.mkdir(parents=True, exist_ok=True)
 
-    initial_tree = {"task_id": task_id, "goal": req.goal, "status": "IN_PROGRESS", "nodes": {}}
+    saved_files = []
+    if files:
+        for f in files:
+            if f.filename:
+                dest = uploads_dir / f.filename
+                dest.write_bytes(await f.read())
+                saved_files.append(f.filename)
+
+    (task_dir / "goal.md").write_text(goal, encoding="utf-8")
+    selected_model = model or DEFAULT_MODEL
+    initial_tree = {"task_id": task_id, "goal": goal, "model": selected_model, "uploads": saved_files, "status": "IN_PROGRESS", "nodes": {}}
     (task_dir / "tree.json").write_text(json.dumps(initial_tree, indent=2, ensure_ascii=False), encoding="utf-8")
 
     orch = Orchestrator(task_id)
@@ -75,18 +92,26 @@ def stop_task(task_id: str):
     return {"task_id": task_id, "status": "STOPPING"}
 
 
+@app.delete("/api/tasks/{task_id}")
+def delete_single_task(task_id: str):
+    task_dir = WORKSPACE_DIR / task_id
+    if not task_dir.exists() or not task_dir.is_dir():
+        return {"error": "Task not found"}
+    (task_dir / "stop.flag").write_text("STOP", encoding="utf-8")
+    shutil.rmtree(task_dir, ignore_errors=True)
+    return {"deleted": task_id}
+
+
 @app.delete("/api/tasks")
 def clear_old_tasks():
     if not WORKSPACE_DIR.exists():
         return {"deleted": 0}
     deleted = 0
     for task_dir in WORKSPACE_DIR.iterdir():
-        tree_path = task_dir / "tree.json"
-        if task_dir.is_dir() and tree_path.exists():
-            tree = json.loads(tree_path.read_text(encoding="utf-8"))
-            if tree.get("status") not in ["IN_PROGRESS", "STOPPING..."]:
-                shutil.rmtree(task_dir, ignore_errors=True)
-                deleted += 1
+        if task_dir.is_dir():
+            (task_dir / "stop.flag").write_text("STOP", encoding="utf-8")
+            shutil.rmtree(task_dir, ignore_errors=True)
+            deleted += 1
     return {"deleted": deleted}
 
 
