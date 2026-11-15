@@ -12,7 +12,9 @@ function switchTab(tab) {
 async function fetchModels() {
     const data = await (await fetch('/api/models')).json();
     const sel = document.getElementById('modelSelect');
-    sel.innerHTML = data.models.map(m => `<option value="${m}" ${m === data.default ? 'selected' : ''}>Модель: ${m}</option>`).join('');
+    const autoOpt = `<option value="AUTO" selected>Авто (Роутинг по ролям: R1 + DeepSeek-Coder + Qwen)</option>`;
+    const modelsOpts = data.models.map(m => `<option value="${m}">Модель: ${m}</option>`).join('');
+    sel.innerHTML = autoOpt + modelsOpts;
 }
 
 async function loadMemory() {
@@ -88,15 +90,25 @@ async function fetchTasks() {
         <div class="task-goal">${t.goal}</div>
         </div>`;
     }).join('');
-    if (!currentTaskId && data.tasks.length > 0) selectTask(data.tasks[0].id);
+    if (!currentTaskId && data.tasks.length > 0) selectTask(data.tasks.id);
 }
 
 async function createTask() {
     const goal = document.getElementById('goalInput').value.trim();
     const model = document.getElementById('modelSelect').value;
+    const filesInput = document.getElementById('fileInput');
     if (!goal) return;
+
+    const formData = new FormData();
+    formData.append('goal', goal);
+    formData.append('model', model);
+    for (const file of filesInput.files) {
+        formData.append('files', file);
+    }
+
     document.getElementById('goalInput').value = '';
-    const data = await (await fetch('/api/tasks', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({goal, model}) })).json();
+    filesInput.value = '';
+    const data = await (await fetch('/api/tasks', { method: 'POST', body: formData })).json();
     await fetchTasks();
     selectTask(data.task_id);
 }
@@ -110,7 +122,8 @@ async function updateTaskDetails() {
     if (data.error) return;
     const tree = data.tree;
     document.getElementById('currentTitle').innerText = tree.goal || currentTaskId;
-    document.getElementById('currentModelTag').innerText = tree.model ? `Модель: ${tree.model}` : '';
+    const filesTag = tree.uploads?.length ? ` | Файлы: ${tree.uploads.join(', ')}` : '';
+    document.getElementById('currentModelTag').innerText = (tree.model ? `Режим: ${tree.model}` : '') + filesTag;
     document.getElementById('globalStatus').innerText = tree.status;
 
     const stopBtn = document.getElementById('stopBtn');
