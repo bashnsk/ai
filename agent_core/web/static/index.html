@@ -37,29 +37,29 @@
                 </div>
                 <div style="display: flex; align-items: center; gap: 10px; flex-shrink: 0;">
                     <span id="globalStatus" class="badge">IDLE</span>
-                    <button id="rerunBtn" class="btn-clear" style="display: none; background: #0284c7; color: #fff; padding: 6px 14px;" onclick="rerunCurrentTask()" title="Запустить снова с выбранной в списке моделью">Повторить</button>
+                    <button id="rerunBtn" class="btn-clear" style="display: none; background: #0284c7; color: #fff; padding: 6px 14px;" onclick="rerunCurrentTask()">Повторить</button>
                     <button id="stopBtn" class="btn-stop" style="display: none;" onclick="stopCurrentTask()">СТОП</button>
                 </div>
             </div>
             <div id="finalResultBox"></div>
             <h3>Граф подзадач</h3>
             <div id="nodesContainer"></div>
-            <h3>Лог событий (Live)</h3>
-            <pre id="logsContainer">Ожидание...</pre>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin: 14px 0 8px 0;">
+                <h3 style="margin: 0;">Лог событий (Live)</h3>
+                <div style="display: flex; gap: 8px;">
+                    <button class="btn-clear" onclick="toggleLogsSize()">Развернуть</button>
+                    <button id="copyLogBtn" class="btn-clear" onclick="copyLogs()">Копировать лог</button>
+                </div>
+            </div>
+            <pre id="logsContainer" style="max-height: 240px;">Ожидание...</pre>
         </div>
     </div>
 
     <div id="memoryView" class="mem-grid">
-        <div class="card">
-            <h3>Выученные навыки (Skills)</h3>
-            <div id="skillsList">Загрузка...</div>
-        </div>
-        <div class="card">
-            <h3>Журнал ошибок (Anti-patterns)</h3>
-            <div id="antiList">Загрузка...</div>
-        </div>
+        <div class="card"><h3>Выученные навыки (Skills)</h3><div id="skillsList">Загрузка...</div></div>
+        <div class="card"><h3>Журнал ошибок (Anti-patterns)</h3><div id="antiList">Загрузка...</div></div>
     </div>
 </div>
-<script src="/static/app.js?v=4"></script>
+<script src="/static/app.js?v=5"></script>
 </body>
 </html>

@@ -40,6 +40,12 @@ class NodeRunner:
                 content = f.read_text(encoding="utf-8", errors="ignore").strip()
                 parts.append(f"### Файл {f.name} ({len(content)} симв.):\n```\n{content[:3500]}\n```")
         return "\n\n".join(parts) if parts else "Папка artifacts/ пуста."
+
+    def _summarize_code(self, code: str) -> str:
+        lines = [l.strip() for l in code.splitlines() if l.strip()]
+        imports = [l for l in lines if l.startswith(("import ", "from "))]
+        imp_str = ", ".join(imports[:3]) if imports else "без внешних импортов"
+        return f"{len(lines)} строк ({imp_str})"
     def execute(self, node_id: str, node: dict, tree: dict):
         node_dir = self.orch.nodes_dir / node_id
         node_dir.mkdir(parents=True, exist_ok=True)
@@ -56,29 +62,27 @@ class NodeRunner:
         spec_file = node_dir / "dynamic_spec.json"
         if not spec_file.exists():
             self.orch.log_event(node_id, "Генерация персональных критериев задачи...")
-            spec = build_dynamic_spec(tree["goal"], node["title"], has_uploads, model_override=selected_model)
+            spec = build_dynamic_spec(
+                tree["goal"], node["title"], has_uploads,
+                model_override=selected_model,
+                failed_tool_hint=node.get("failed_tool_hint", "")
+            )
             spec_file.write_text(json.dumps(spec, indent=2, ensure_ascii=False), encoding="utf-8")
         else:
             spec = json.loads(spec_file.read_text(encoding="utf-8"))
 
-        dep_results = ""
-        for dep_id in node.get("dependencies", []):
-            res_file = self.orch.nodes_dir / dep_id / "result.md"
-            if res_file.exists():
-                dep_results += f"\n--- Шаг {dep_id} ---\n{res_file.read_text(encoding='utf-8')}\n"
-
+        dep_results = "".join(
+            f"\n--- Шаг {d} ---\n{(self.orch.nodes_dir / d / 'result.md').read_text(encoding='utf-8')}\n"
+            for d in node.get("dependencies", []) if (self.orch.nodes_dir / d / "result.md").exists()
+        )
         critique_file = node_dir / "critique.md"
         prev_crit = critique_file.read_text(encoding="utf-8") if critique_file.exists() else "Нет."
-        recipes = self.orch.memory.get_recipes(node["title"])
-
         context_md = (
-            f"# Задача\n{node['title']}\n\n"
-            f"# Персональные технические требования (Curator)\n{spec['worker_rules']}\n\n"
-            f"# Папка артефактов\n{self.orch.artifacts_dir}\n\n"
-            f"# Прикрепленные пользователем файлы\n{uploads_info}\n\n"
-            f"# Рецепты из памяти\n{recipes}\n\n"
-            f"# Данные прошлых шагов\n{dep_results or 'Нет'}\n\n"
-            f"# Замечания Критика с прошлой попытки\n{prev_crit}\n"
+            f"# Глобальная цель пользователя\n{tree['goal']}\n\n"
+            f"# Текущий атомарный шаг\n{node['title']}\n\n"
+            f"# Персональные требования (Curator)\n{spec['worker_rules']}\n\n"
+            f"# Папка артефактов\n{self.orch.artifacts_dir}\n\n# Файлы пользователя\n{uploads_info}\n\n"
+            f"# Рецепты\n{self.orch.memory.get_recipes(node['title'])}\n\n# Прошлые шаги\n{dep_results or 'Нет'}\n\n# Замечания Критика\n{prev_crit}\n"
         )
         (node_dir / "context.md").write_text(context_md, encoding="utf-8")
 
@@ -90,36 +94,33 @@ class NodeRunner:
         exec_report = "\n## Выполнение кода: СКРИПТ НЕ ЗАПУСКАЛСЯ\n"
 
         if code:
-            self.orch.log_event(node_id, "Запуск Python-скрипта...")
+            self.orch.log_event(node_id, f"Запуск Python-скрипта: {self._summarize_code(code)}...")
             res = run_python_script(code, node_dir)
-            exec_report = (
-                f"\n## Выполнение кода (exit: {res['returncode']})\n"
-                f"STDOUT:\n```\n{res['stdout']}\n```\nSTDERR:\n```\n{res['stderr']}\n```\n"
-            )
+            out_preview = (res["stdout"] or res["stderr"] or "пустой вывод").strip().replace("\n", " ")[:120]
+            self.orch.log_event(node_id, f"Код завершен (exit {res['returncode']}): {out_preview}")
+            exec_report = f"\n## Выполнение кода (exit: {res['returncode']})\nSTDOUT:\n```\n{res['stdout']}\n```\nSTDERR:\n```\n{res['stderr']}\n```\n"
         elif has_uploads:
             self.orch.artifacts_dir.mkdir(parents=True, exist_ok=True)
             (self.orch.artifacts_dir / "final_report.md").write_text(worker_out, encoding="utf-8")
+            self.orch.log_event(node_id, "Сформирован прямой текстовый отчет без запуска скрипта.")
 
-        artifacts_preview = self._read_artifacts_preview()
-        result_md = f"{worker_out}\n{exec_report}\n## Содержимое папки artifacts/\n{artifacts_preview}\n"
+        result_md = f"{worker_out}\n{exec_report}\n## Содержимое папки artifacts/\n{self._read_artifacts_preview()}\n"
         (node_dir / "result.md").write_text(result_md, encoding="utf-8")
 
         critic_sys = (SYSTEM_DIR / "critic.md").read_text(encoding="utf-8")
-        critic_input = (
-            f"# Исходная задача\n{tree['goal']}\n\n# Текущий узел\n{node['title']}\n\n"
-            f"# Персональный чек-лист приемки (Curator)\n{spec['critic_checklist']}\n\n# Результат и файлы\n{result_md}"
-        )
+        critic_input = f"# Глобальная цель\n{tree['goal']}\n\n# Узел\n{node['title']}\n\n# Чек-лист\n{spec['critic_checklist']}\n\n# Результат\n{result_md}"
         critic_out = call_agent("critic", critic_sys, critic_input, stop_flag=self.orch.stop_flag, model_override=selected_model)
         critique_file.write_text(critic_out, encoding="utf-8")
 
+        reason = critic_out.replace("VERDICT: FAIL", "").replace("VERDICT: PASS", "").strip().replace("\n", " ")[:130]
         if "VERDICT: PASS" in critic_out.upper():
             node["status"] = "DONE"
-            self.orch.log_event(node_id, "Критик: PASS. Узел закрыт.")
+            self.orch.log_event(node_id, f"Критик: PASS — {reason or 'все требования выполнены.'}")
         elif node["attempts"] >= MAX_ATTEMPTS_PER_NODE:
             node["status"] = "FAILED"
-            self.orch.log_event(node_id, "Критик: FAIL. Лимит попыток исчерпан.")
+            self.orch.log_event(node_id, f"Критик: FAIL (лимит попыток) — {reason}")
         else:
             node["status"] = "RETRY"
-            self.orch.log_event(node_id, "Критик: FAIL. Отправлено на доработку.")
+            self.orch.log_event(node_id, f"Критик: FAIL (на доработку) — {reason}")
 
         self.orch.save_tree(tree)
