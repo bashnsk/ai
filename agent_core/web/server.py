@@ -2,11 +2,13 @@ import json
 import shutil
 import threading
 from datetime import datetime
+from typing import Optional
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from config import WORKSPACE_DIR, BASE_DIR, MEMORY_DIR
+from config import WORKSPACE_DIR, BASE_DIR, MEMORY_DIR, DEFAULT_MODEL
+from llm_client import get_available_models
 from orchestrator import Orchestrator
 
 app = FastAPI(title="Agent Core Orchestrator")
@@ -31,11 +33,17 @@ def cleanup_stale_tasks():
 
 class TaskRequest(BaseModel):
     goal: str
+    model: Optional[str] = None
 
 
 @app.get("/")
 def index():
     return FileResponse(static_dir / "index.html")
+
+
+@app.get("/api/models")
+def list_models():
+    return {"models": get_available_models(), "default": DEFAULT_MODEL}
 
 
 @app.post("/api/tasks")
@@ -52,7 +60,8 @@ def create_task(req: TaskRequest):
     (task_dir / "nodes").mkdir(parents=True, exist_ok=True)
     (task_dir / "goal.md").write_text(req.goal, encoding="utf-8")
 
-    initial_tree = {"task_id": task_id, "goal": req.goal, "status": "IN_PROGRESS", "nodes": {}}
+    selected_model = req.model or DEFAULT_MODEL
+    initial_tree = {"task_id": task_id, "goal": req.goal, "model": selected_model, "status": "IN_PROGRESS", "nodes": {}}
     (task_dir / "tree.json").write_text(json.dumps(initial_tree, indent=2, ensure_ascii=False), encoding="utf-8")
 
     orch = Orchestrator(task_id)
@@ -73,6 +82,20 @@ def stop_task(task_id: str):
             tree["status"] = "STOPPING..."
             tree_path.write_text(json.dumps(tree, indent=2, ensure_ascii=False), encoding="utf-8")
     return {"task_id": task_id, "status": "STOPPING"}
+
+
+@app.delete("/api/tasks/{task_id}")
+def delete_single_task(task_id: str):
+    task_dir = WORKSPACE_DIR / task_id
+    if not task_dir.exists() or not task_dir.is_dir():
+        return {"error": "Task not found"}
+    tree_path = task_dir / "tree.json"
+    if tree_path.exists():
+        tree = json.loads(tree_path.read_text(encoding="utf-8"))
+        if tree.get("status") in ["IN_PROGRESS", "STOPPING..."]:
+            return {"error": "Cannot delete running task"}
+    shutil.rmtree(task_dir, ignore_errors=True)
+    return {"deleted": task_id}
 
 
 @app.delete("/api/tasks")

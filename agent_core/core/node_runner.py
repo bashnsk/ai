@@ -21,11 +21,12 @@ class NodeRunner:
     def execute(self, node_id: str, node: dict, tree: dict):
         node_dir = self.orch.nodes_dir / node_id
         node_dir.mkdir(parents=True, exist_ok=True)
+        selected_model = tree.get("model")
 
         node["attempts"] = node.get("attempts", 0) + 1
         node["status"] = "IN_PROGRESS"
         self.orch.save_tree(tree)
-        self.orch.log_event(node_id, f"Попытка #{node['attempts']}: {node['title']}")
+        self.orch.log_event(node_id, f"Попытка #{node['attempts']} ({selected_model or 'default'}): {node['title']}")
 
         dep_results = ""
         for dep_id in node.get("dependencies", []):
@@ -47,7 +48,10 @@ class NodeRunner:
         (node_dir / "context.md").write_text(context_md, encoding="utf-8")
 
         worker_sys = (SYSTEM_DIR / "worker.md").read_text(encoding="utf-8")
-        worker_out = call_agent("worker_code", worker_sys, context_md, stop_flag=self.orch.stop_flag)
+        worker_out = call_agent(
+            "worker_code", worker_sys, context_md,
+            stop_flag=self.orch.stop_flag, model_override=selected_model
+        )
 
         match = re.search(r"```python\n(.*?)```", worker_out, flags=re.DOTALL)
         code = match.group(1).strip() if match else ""
@@ -69,7 +73,7 @@ class NodeRunner:
         critic_out = call_agent(
             "critic", critic_sys,
             f"# Задача\n{node['title']}\n\n# Результат и файлы\n{result_md}",
-            stop_flag=self.orch.stop_flag
+            stop_flag=self.orch.stop_flag, model_override=selected_model
         )
 
         critique_file.write_text(critic_out, encoding="utf-8")

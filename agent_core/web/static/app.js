@@ -9,6 +9,12 @@ function switchTab(tab) {
     if (tab === 'memory') loadMemory();
 }
 
+async function fetchModels() {
+    const data = await (await fetch('/api/models')).json();
+    const sel = document.getElementById('modelSelect');
+    sel.innerHTML = data.models.map(m => `<option value="${m}" ${m === data.default ? 'selected' : ''}>Модель: ${m}</option>`).join('');
+}
+
 async function loadMemory() {
     const data = await (await fetch('/api/memory')).json();
     document.getElementById('skillsList').innerHTML = data.skills.length ? data.skills.map(s => `
@@ -40,15 +46,27 @@ function formatLinks(text) {
     return s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br>');
 }
 
-async function clearOldTasks() {
-    await fetch('/api/tasks', { method: 'DELETE' });
+function resetMainView() {
     currentTaskId = null;
     document.getElementById('currentTitle').innerText = 'Выберите или создайте задачу';
+    document.getElementById('currentModelTag').innerText = '';
     document.getElementById('globalStatus').innerText = 'IDLE';
     document.getElementById('stopBtn').style.display = 'none';
     document.getElementById('finalResultBox').innerHTML = '';
     document.getElementById('nodesContainer').innerHTML = '';
     document.getElementById('logsContainer').innerText = 'Ожидание...';
+}
+
+async function clearOldTasks() {
+    await fetch('/api/tasks', { method: 'DELETE' });
+    resetMainView();
+    fetchTasks();
+}
+
+async function deleteSingleTask(e, id) {
+    e.stopPropagation();
+    await fetch(`/api/tasks/${id}`, { method: 'DELETE' });
+    if (currentTaskId === id) resetMainView();
     fetchTasks();
 }
 
@@ -56,19 +74,29 @@ async function stopCurrentTask() { if (currentTaskId) { await fetch(`/api/tasks/
 
 async function fetchTasks() {
     const data = await (await fetch('/api/tasks')).json();
-    document.getElementById('taskList').innerHTML = data.tasks.map(t => `
-    <div class="task-item ${t.id === currentTaskId ? 'active' : ''}" onclick="selectTask('${t.id}')">
-    <div style="display:flex; justify-content:space-between; font-size:11px; color:#94a3b8;"><span>${t.id}</span><span class="badge">${t.status}</span></div>
-    <div class="task-goal">${t.goal}</div>
-    </div>`).join('');
-    if (!currentTaskId && data.tasks.length > 0) selectTask(data.tasks.id);
+    document.getElementById('taskList').innerHTML = data.tasks.map(t => {
+        const canDel = !['IN_PROGRESS', 'STOPPING...'].includes(t.status);
+        return `
+        <div class="task-item ${t.id === currentTaskId ? 'active' : ''}" onclick="selectTask('${t.id}')">
+        <div style="display:flex; justify-content:space-between; align-items:center; font-size:11px; color:#94a3b8;">
+        <span>${t.id}</span>
+        <div style="display:flex; align-items:center; gap:6px;">
+        <span class="badge">${t.status}</span>
+        ${canDel ? `<button class="btn-stop btn-sm" style="padding:1px 6px;" title="Удалить задачу" onclick="deleteSingleTask(event,'${t.id}')">×</button>` : ''}
+        </div>
+        </div>
+        <div class="task-goal">${t.goal}</div>
+        </div>`;
+    }).join('');
+    if (!currentTaskId && data.tasks.length > 0) selectTask(data.tasks[0].id);
 }
 
 async function createTask() {
     const goal = document.getElementById('goalInput').value.trim();
+    const model = document.getElementById('modelSelect').value;
     if (!goal) return;
     document.getElementById('goalInput').value = '';
-    const data = await (await fetch('/api/tasks', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({goal}) })).json();
+    const data = await (await fetch('/api/tasks', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({goal, model}) })).json();
     await fetchTasks();
     selectTask(data.task_id);
 }
@@ -82,6 +110,7 @@ async function updateTaskDetails() {
     if (data.error) return;
     const tree = data.tree;
     document.getElementById('currentTitle').innerText = tree.goal || currentTaskId;
+    document.getElementById('currentModelTag').innerText = tree.model ? `Модель: ${tree.model}` : '';
     document.getElementById('globalStatus').innerText = tree.status;
 
     const stopBtn = document.getElementById('stopBtn');
@@ -106,4 +135,5 @@ async function updateTaskDetails() {
 }
 
 setInterval(() => { if (currentTaskId) { updateTaskDetails(); fetchTasks(); } }, 2500);
+fetchModels();
 fetchTasks();

@@ -9,11 +9,29 @@ class TaskStoppedException(Exception):
     pass
 
 
-def call_agent(role: str, system_prompt: str, user_payload: str, stop_flag: Path = None, num_ctx: int = 8192) -> str:
+def get_available_models() -> list[str]:
+    tags_url = OLLAMA_URL.replace("/api/chat", "/api/tags")
+    try:
+        resp = requests.get(tags_url, timeout=5)
+        resp.raise_for_status()
+        models = [m["name"] for m in resp.json().get("models", [])]
+        return sorted(models) if models else [DEFAULT_MODEL]
+    except Exception:
+        return [DEFAULT_MODEL]
+
+
+def call_agent(
+    role: str,
+    system_prompt: str,
+    user_payload: str,
+    stop_flag: Path = None,
+    num_ctx: int = 8192,
+    model_override: str = None
+) -> str:
     if stop_flag and stop_flag.exists():
         raise TaskStoppedException("Остановлено пользователем")
 
-    model = ROLE_MODELS.get(role, DEFAULT_MODEL)
+    model = model_override or ROLE_MODELS.get(role, DEFAULT_MODEL)
     payload = {
         "model": model,
         "messages": [

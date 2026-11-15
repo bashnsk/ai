@@ -7,8 +7,6 @@ from llm_client import call_agent, TaskStoppedException
 from core.memory_manager import MemoryManager
 from core.node_runner import NodeRunner
 
-MAX_REPLANS = 2
-
 
 class Orchestrator:
     def __init__(self, task_id: str):
@@ -19,6 +17,7 @@ class Orchestrator:
         self.stop_flag = self.task_dir / "stop.flag"
         self.memory = MemoryManager()
         self.runner = NodeRunner(self)
+        self.failed_strategies = []
 
     def load_tree(self) -> dict:
         return json.loads(self.tree_path.read_text(encoding="utf-8"))
@@ -31,18 +30,25 @@ class Orchestrator:
         with open(self.task_dir / "events.log", "a", encoding="utf-8") as f:
             f.write(f"[{ts}] [{node_id}] {message}\n")
 
-    def plan_task(self, failure_report: str = ""):
+    def plan_task(self, is_replan: bool = False):
         tree = self.load_tree()
-        if tree.get("nodes") and not failure_report:
+        if tree.get("nodes") and not is_replan:
             return
 
-        self.log_event("ARCHITECT", "Пересборка плана..." if failure_report else "Построение графа задач...")
+        selected_model = tree.get("model")
+        attempt_num = len(self.failed_strategies) + 1
+        self.log_event("ARCHITECT", f"Стратегия #{attempt_num} ({selected_model or 'default'}): построение графа...")
         arch_sys = (SYSTEM_DIR / "architect.md").read_text(encoding="utf-8")
         prompt = f"Цель:\n{tree['goal']}\n\nНавыки в памяти:\n{self.memory.get_summary()}"
-        if failure_report:
-            prompt += f"\n\nПровал прошлого плана:\n{failure_report}\nПострой обходной план."
 
-        raw_plan = call_agent("architect", arch_sys, prompt, stop_flag=self.stop_flag)
+        if self.failed_strategies:
+            history = "\n".join(f"- Попытка #{i+1}: {s}" for i, s in enumerate(self.failed_strategies))
+            prompt += (
+                f"\n\nВНИМАНИЕ! Следующие подходы уже провалились и ЗАПРЕЩЕНЫ к повторению:\n{history}\n"
+                f"Придумай принципиально новую стратегию (например, прямой парсинг выдачи через Playwright с сортировкой по цене или другой поисковик/площадку)!"
+            )
+
+        raw_plan = call_agent("architect", arch_sys, prompt, stop_flag=self.stop_flag, model_override=selected_model)
         match = re.search(r"```json\n(.*?)```", raw_plan, flags=re.DOTALL)
         json_str = match.group(1).strip() if match else raw_plan.strip()
         try:
@@ -63,8 +69,7 @@ class Orchestrator:
         return None, None
 
     def run_loop(self):
-        self.log_event("SYSTEM", "Оркестратор запущен.")
-        replan_count = 0
+        self.log_event("SYSTEM", "Оркестратор запущен (режим работы до победного результата).")
         try:
             self.plan_task()
             while True:
@@ -78,22 +83,21 @@ class Orchestrator:
                     if all(s == "DONE" for s in statuses):
                         tree["status"] = "COMPLETED"
                         self.save_tree(tree)
-                        self.log_event("SYSTEM", "Все задачи выполнены!")
+                        self.log_event("SYSTEM", "Все задачи успешно выполнены!")
                         msg = self.memory.learn_from_task(tree, self.nodes_dir)
                         self.log_event("OPTIMIZER", msg)
                         break
-                    elif any(s == "FAILED" for s in statuses) and replan_count < MAX_REPLANS:
-                        replan_count += 1
+
+                    if any(s == "FAILED" for s in statuses):
                         fid = next(k for k, v in tree["nodes"].items() if v["status"] == "FAILED")
                         crit_f = self.nodes_dir / fid / "critique.md"
                         crit = crit_f.read_text(encoding="utf-8") if crit_f.exists() else "Ошибка"
-                        self.memory.save_anti_pattern(self.task_dir.name, replan_count, tree["nodes"][fid]["title"], crit)
-                        self.plan_task(failure_report=f"Шаг '{tree['nodes'][fid]['title']}' провалился:\n{crit}")
+                        fail_desc = f"Шаг '{tree['nodes'][fid]['title']}' -> {crit[:300]}"
+                        self.failed_strategies.append(fail_desc)
+                        self.memory.save_anti_pattern(self.task_dir.name, len(self.failed_strategies), tree["nodes"][fid]["title"], crit)
+                        self.plan_task(is_replan=True)
+                        time.sleep(2)
                         continue
-                    tree["status"] = "FAILED"
-                    self.save_tree(tree)
-                    self.log_event("SYSTEM", "Задача остановлена после исчерпания попыток.")
-                    break
 
                 self.runner.execute(node_id, node, tree)
                 time.sleep(1)
@@ -105,7 +109,7 @@ class Orchestrator:
                 if n["status"] == "IN_PROGRESS":
                     n["status"] = "STOPPED"
             self.save_tree(tree)
-            self.log_event("SYSTEM", "Задача мгновенно остановлена пользователем.")
+            self.log_event("SYSTEM", "Задача остановлена пользователем.")
         except Exception as e:
             tree = self.load_tree()
             tree["status"] = "FAILED"
