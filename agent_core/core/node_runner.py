@@ -1,5 +1,7 @@
 import re
-from config import SYSTEM_DIR, MAX_ATTEMPTS_PER_NODE, ROLE_MODELS, DEFAULT_MODEL
+import shutil
+from config import SYSTEM_DIR, MAX_ATTEMPTS_PER_NODE, DEFAULT_MODEL
+from core.model_profiler import build_model_profile
 from llm_client import call_agent, extract_text_from_image
 from sandbox import run_python_script
 
@@ -10,7 +12,7 @@ class NodeRunner:
     def __init__(self, orch):
         self.orch = orch
 
-    def _read_uploads_context(self) -> str:
+    def _prepare_uploads(self, node_dir) -> str:
         uploads_dir = self.orch.task_dir / "uploads"
         if not uploads_dir.exists():
             return "Нет прикрепленных файлов."
@@ -18,12 +20,13 @@ class NodeRunner:
         for f in sorted(uploads_dir.iterdir()):
             if not f.is_file():
                 continue
+            shutil.copy2(f, node_dir / f.name)
             if f.suffix.lower() in IMAGE_EXTS:
                 ocr_txt = extract_text_from_image(f)
-                parts.append(f"### Изображение {f.name} (путь: {f}, распознанный текст через glm-ocr):\n{ocr_txt}")
+                parts.append(f"### Изображение `{f.name}` (полный путь: `{f}`):\nРезультат анализа изображения:\n{ocr_txt}")
             else:
-                txt = f.read_text(encoding="utf-8", errors="ignore")[:4000]
-                parts.append(f"### Файл {f.name} (путь: {f}):\n```\n{txt}\n```")
+                txt = f.read_text(encoding="utf-8", errors="ignore")[:8000]
+                parts.append(f"### Файл `{f.name}` (полный путь: `{f}`):\n```\n{txt}\n```")
         return "\n\n".join(parts) if parts else "Нет прикрепленных файлов."
 
     def _read_artifacts_preview(self) -> str:
@@ -40,7 +43,8 @@ class NodeRunner:
         node_dir = self.orch.nodes_dir / node_id
         node_dir.mkdir(parents=True, exist_ok=True)
         selected_model = tree.get("model")
-        active_w_model = ROLE_MODELS.get("worker_code", DEFAULT_MODEL) if selected_model == "AUTO" else selected_model
+        profile = build_model_profile()
+        active_w_model = profile.get("worker_code", {}).get("model", DEFAULT_MODEL) if selected_model == "AUTO" else selected_model
 
         node["attempts"] = node.get("attempts", 0) + 1
         node["status"] = "IN_PROGRESS"
@@ -56,7 +60,7 @@ class NodeRunner:
         critique_file = node_dir / "critique.md"
         prev_crit = critique_file.read_text(encoding="utf-8") if critique_file.exists() else "Нет."
         recipes = self.orch.memory.get_recipes(node["title"])
-        uploads_info = self._read_uploads_context()
+        uploads_info = self._prepare_uploads(node_dir)
 
         context_md = (
             f"# Задача\n{node['title']}\n\n"
@@ -82,6 +86,9 @@ class NodeRunner:
                 f"\n## Выполнение кода (exit: {res['returncode']})\n"
                 f"STDOUT:\n```\n{res['stdout']}\n```\nSTDERR:\n```\n{res['stderr']}\n```\n"
             )
+        elif "final_report.md" in node["title"] or len(tree.get("nodes", {})) == 1:
+            self.orch.artifacts_dir.mkdir(parents=True, exist_ok=True)
+            (self.orch.artifacts_dir / "final_report.md").write_text(worker_out, encoding="utf-8")
 
         artifacts_preview = self._read_artifacts_preview()
         result_md = f"{worker_out}\n{exec_report}\n## Содержимое папки artifacts/\n{artifacts_preview}\n"

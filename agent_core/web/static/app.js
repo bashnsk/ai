@@ -76,21 +76,18 @@ async function stopCurrentTask() { if (currentTaskId) { await fetch(`/api/tasks/
 
 async function fetchTasks() {
     const data = await (await fetch('/api/tasks')).json();
-    document.getElementById('taskList').innerHTML = data.tasks.map(t => {
-        const canDel = !['IN_PROGRESS', 'STOPPING...'].includes(t.status);
-        return `
-        <div class="task-item ${t.id === currentTaskId ? 'active' : ''}" onclick="selectTask('${t.id}')">
-        <div style="display:flex; justify-content:space-between; align-items:center; font-size:11px; color:#94a3b8;">
-        <span>${t.id}</span>
-        <div style="display:flex; align-items:center; gap:6px;">
-        <span class="badge">${t.status}</span>
-        ${canDel ? `<button class="btn-stop btn-sm" style="padding:1px 6px;" title="Удалить задачу" onclick="deleteSingleTask(event,'${t.id}')">×</button>` : ''}
-        </div>
-        </div>
-        <div class="task-goal">${t.goal}</div>
-        </div>`;
-    }).join('');
-    if (!currentTaskId && data.tasks.length > 0) selectTask(data.tasks.id);
+    document.getElementById('taskList').innerHTML = data.tasks.map(t => `
+    <div class="task-item ${t.id === currentTaskId ? 'active' : ''}" onclick="selectTask('${t.id}')">
+    <div style="display:flex; justify-content:space-between; align-items:center; font-size:11px; color:#94a3b8;">
+    <span>${t.id}</span>
+    <div style="display:flex; align-items:center; gap:6px;">
+    <span class="badge">${t.status}</span>
+    <button class="btn-stop btn-sm" style="padding:1px 6px;" title="Удалить задачу" onclick="deleteSingleTask(event,'${t.id}')">×</button>
+    </div>
+    </div>
+    <div class="task-goal">${t.goal}</div>
+    </div>`).join('');
+    if (!currentTaskId && data.tasks.length > 0) selectTask(data.tasks[0].id);
 }
 
 async function createTask() {

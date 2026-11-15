@@ -18,26 +18,16 @@ app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
 
 @app.on_event("startup")
-def resume_or_clean_tasks():
+def mark_old_running_stopped():
     if not WORKSPACE_DIR.exists():
         return
-    for task_dir in sorted(WORKSPACE_DIR.iterdir()):
+    for task_dir in WORKSPACE_DIR.iterdir():
         tree_path = task_dir / "tree.json"
-        if not (task_dir.is_dir() and tree_path.exists()):
-            continue
-        tree = json.loads(tree_path.read_text(encoding="utf-8"))
-        status = tree.get("status")
-        if status == "STOPPING..." or (task_dir / "stop.flag").exists():
-            tree["status"] = "STOPPED"
-            tree_path.write_text(json.dumps(tree, indent=2, ensure_ascii=False), encoding="utf-8")
-        elif status == "IN_PROGRESS":
-            for node in tree.get("nodes", {}).values():
-                if node.get("status") == "IN_PROGRESS":
-                    node["status"] = "PENDING"
-                    node["attempts"] = max(0, node.get("attempts", 1) - 1)
-            tree_path.write_text(json.dumps(tree, indent=2, ensure_ascii=False), encoding="utf-8")
-            orch = Orchestrator(task_dir.name)
-            threading.Thread(target=orch.run_loop, daemon=True).start()
+        if task_dir.is_dir() and tree_path.exists():
+            tree = json.loads(tree_path.read_text(encoding="utf-8"))
+            if tree.get("status") in ["IN_PROGRESS", "STOPPING..."]:
+                tree["status"] = "STOPPED"
+                tree_path.write_text(json.dumps(tree, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 @app.get("/")
@@ -107,11 +97,7 @@ def delete_single_task(task_id: str):
     task_dir = WORKSPACE_DIR / task_id
     if not task_dir.exists() or not task_dir.is_dir():
         return {"error": "Task not found"}
-    tree_path = task_dir / "tree.json"
-    if tree_path.exists():
-        tree = json.loads(tree_path.read_text(encoding="utf-8"))
-        if tree.get("status") in ["IN_PROGRESS", "STOPPING..."]:
-            return {"error": "Cannot delete running task"}
+    (task_dir / "stop.flag").write_text("STOP", encoding="utf-8")
     shutil.rmtree(task_dir, ignore_errors=True)
     return {"deleted": task_id}
 
@@ -122,12 +108,10 @@ def clear_old_tasks():
         return {"deleted": 0}
     deleted = 0
     for task_dir in WORKSPACE_DIR.iterdir():
-        tree_path = task_dir / "tree.json"
-        if task_dir.is_dir() and tree_path.exists():
-            tree = json.loads(tree_path.read_text(encoding="utf-8"))
-            if tree.get("status") not in ["IN_PROGRESS", "STOPPING..."]:
-                shutil.rmtree(task_dir, ignore_errors=True)
-                deleted += 1
+        if task_dir.is_dir():
+            (task_dir / "stop.flag").write_text("STOP", encoding="utf-8")
+            shutil.rmtree(task_dir, ignore_errors=True)
+            deleted += 1
     return {"deleted": deleted}
 
 

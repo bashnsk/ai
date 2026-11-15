@@ -1,5 +1,6 @@
 import json
 import re
+import threading
 from config import MEMORY_DIR, SYSTEM_DIR
 from llm_client import call_agent
 
@@ -45,25 +46,25 @@ class MemoryManager:
                     recipes.append(f"### Рецепт: {s['summary']}\n{skill_file.read_text(encoding='utf-8')}")
         return "\n\n".join(recipes) if recipes else "Нет готовых рецептов."
 
-    def save_anti_pattern(self, task_name: str, attempt: int, title: str, critique: str):
+    def save_anti_pattern(self, task_name: str, attempt: int, title: str, critique: str, model_override: str = None):
         path = self.anti_dir / f"fail_{task_name}_{attempt}.md"
         path.write_text(f"Узел: {title}\nОшибка:\n{critique[:800]}", encoding="utf-8")
 
         files = sorted(self.anti_dir.glob("fail_*.md"), key=lambda f: f.stat().st_mtime)
         if len(files) >= 5:
-            self._consolidate_anti_patterns(files)
+            threading.Thread(target=self._consolidate_anti_patterns, args=(list(files), model_override), daemon=True).start()
         while len(files) > MAX_RAW_ANTI_PATTERNS:
             files.pop(0).unlink(missing_ok=True)
 
-    def _consolidate_anti_patterns(self, files: list):
-        raw_errors = "\n---\n".join(f.read_text(encoding="utf-8")[:500] for f in files[-10:])
+    def _consolidate_anti_patterns(self, files: list, model_override: str = None):
+        raw_errors = "\n---\n".join(f.read_text(encoding="utf-8")[:500] for f in files[-10:] if f.exists())
         old_rules = self.rules_path.read_text(encoding="utf-8") if self.rules_path.exists() else ""
         prompt = (
             f"Текущие правила:\n{old_rules}\n\nНовые ошибки:\n{raw_errors}\n\n"
             "Объедини это в список из максимум 10 коротких однострочных правил (чего НЕ делать при парсинге и поиске). Верни только маркированный список."
         )
         try:
-            new_rules = call_agent("optimizer", "Ты — аналитик ошибок. Сжимай логи в короткие правила.", prompt)
+            new_rules = call_agent("optimizer", "Ты — аналитик ошибок. Сжимай логи в короткие правила.", prompt, model_override=model_override)
             self.rules_path.write_text(new_rules.strip(), encoding="utf-8")
             for f in files:
                 f.unlink(missing_ok=True)
@@ -72,13 +73,14 @@ class MemoryManager:
 
     def learn_from_task(self, tree: dict, nodes_dir) -> str:
         opt_sys = (SYSTEM_DIR / "optimizer.md").read_text(encoding="utf-8")
+        selected_model = tree.get("model")
         report = f"Цель: {tree['goal']}\n\nУспешные шаги:\n"
         for nid, node in tree["nodes"].items():
             res_f = nodes_dir / nid / "result.md"
             res_txt = res_f.read_text(encoding="utf-8")[:1500] if res_f.exists() else ""
             report += f"\n--- {nid}: {node['title']} ---\n{res_txt}\n"
 
-        raw_opt = call_agent("optimizer", opt_sys, report)
+        raw_opt = call_agent("optimizer", opt_sys, report, model_override=selected_model)
         match = re.search(r"```json\n(.*?)```", raw_opt, flags=re.DOTALL)
         json_str = match.group(1).strip() if match else raw_opt.strip()
 
