@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Agent Core — Оркестратор</title>
+    <style>
+        body { font-family: system-ui, -apple-system, sans-serif; background: #0f172a; color: #e2e8f0; margin: 0; padding: 20px; }
+        .container { max-width: 1280px; margin: 0 auto; display: grid; grid-template-columns: 300px 1fr; gap: 20px; }
+        .card { background: #1e293b; border-radius: 8px; padding: 16px; border: 1px solid #334155; }
+        h2, h3, h4 { margin-top: 0; color: #38bdf8; }
+        textarea { width: 100%; height: 90px; background: #0f172a; color: #fff; border: 1px solid #475569; border-radius: 6px; padding: 10px; box-sizing: border-box; resize: vertical; }
+        button { background: #0284c7; color: white; border: none; padding: 10px 16px; border-radius: 6px; cursor: pointer; font-weight: 600; width: 100%; margin-top: 10px; }
+        button:hover { background: #0369a1; }
+        .btn-stop { background: #dc2626; width: auto; margin-top: 0; padding: 6px 14px; }
+        .btn-stop:hover { background: #b91c1c; }
+        .btn-clear { background: #475569; width: auto; margin-top: 0; padding: 4px 10px; font-size: 12px; }
+        .btn-clear:hover { background: #64748b; }
+        .task-item { padding: 10px; border-bottom: 1px solid #334155; cursor: pointer; border-radius: 4px; }
+        .task-item:hover, .task-item.active { background: #334155; }
+        .node { background: #0f172a; border-left: 4px solid #64748b; padding: 12px; margin-bottom: 10px; border-radius: 4px; cursor: pointer; }
+        .node:hover { background: #162032; }
+        .node.DONE { border-color: #22c55e; }
+        .node.IN_PROGRESS { border-color: #38bdf8; }
+        .node.RETRY { border-color: #f59e0b; }
+        .node.FAILED, .node.STOPPED { border-color: #ef4444; }
+        .badge { display: inline-block; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: bold; background: #334155; }
+        pre { background: #020617; padding: 12px; border-radius: 6px; overflow-x: auto; font-size: 12px; max-height: 260px; overflow-y: auto; color: #a5f3fc; white-space: pre-wrap; }
+        .details-box { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 10px; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div>
+        <div class="card" style="margin-bottom: 20px;">
+            <h3>Новая задача</h3>
+            <textarea id="goalInput" placeholder="Опишите задачу..."></textarea>
+            <button onclick="createTask()">Запустить агента</button>
+        </div>
+        <div class="card">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <h3 style="margin: 0;">История задач</h3>
+                <button class="btn-clear" onclick="clearOldTasks()">Очистить</button>
+            </div>
+            <div id="taskList">Загрузка...</div>
+        </div>
+    </div>
+    <div class="card">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 12px;">
+            <h2 id="currentTitle" style="margin-bottom: 0;">Выберите или создайте задачу</h2>
+            <div style="display: flex; align-items: center; gap: 10px; flex-shrink: 0;">
+                <span id="globalStatus" class="badge">IDLE</span>
+                <button id="stopBtn" class="btn-stop" style="display: none;" onclick="stopCurrentTask()">СТОП</button>
+            </div>
+        </div>
+        <div id="artifactsBox" style="margin-bottom: 12px; font-size: 13px; color: #4ade80;"></div>
+        <h3>Граф подзадач (нажмите на узел для просмотра)</h3>
+        <div id="nodesContainer"></div>
+        <h3>Лог событий (Live)</h3>
+        <pre id="logsContainer">Ожидание...</pre>
+    </div>
+</div>
+
+<script>
+    let currentTaskId = null;
+    let expandedNode = null;
+
+    async function clearOldTasks() {
+        await fetch('/api/tasks', { method: 'DELETE' });
+        currentTaskId = null;
+        document.getElementById('currentTitle').innerText = 'Выберите или создайте задачу';
+        document.getElementById('globalStatus').innerText = 'IDLE';
+        document.getElementById('stopBtn').style.display = 'none';
+        document.getElementById('nodesContainer').innerHTML = '';
+        document.getElementById('logsContainer').innerText = 'Ожидание...';
+        fetchTasks();
+    }
+
+    async function stopCurrentTask() {
+        if (!currentTaskId) return;
+        await fetch(`/api/tasks/${currentTaskId}/stop`, { method: 'POST' });
+        updateTaskDetails();
+    }
+
+    async function fetchTasks() {
+        const res = await fetch('/api/tasks');
+        const data = await res.json();
+        const list = document.getElementById('taskList');
+        list.innerHTML = data.tasks.map(t =>
+            `<div class="task-item ${t === currentTaskId ? 'active' : ''}" onclick="selectTask('${t}')">${t}</div>`
+        ).join('');
+        if (!currentTaskId && data.tasks.length > 0) selectTask(data.tasks);
+    }
+
+    async function createTask() {
+        const goal = document.getElementById('goalInput').value.trim();
+        if (!goal) return;
+        document.getElementById('goalInput').value = '';
+        const res = await fetch('/api/tasks', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({goal})
+        });
+        const data = await res.json();
+        await fetchTasks();
+        selectTask(data.task_id);
+    }
+
+    function selectTask(taskId) {
+        currentTaskId = taskId;
+        expandedNode = null;
+        fetchTasks();
+        updateTaskDetails();
+    }
+
+    function toggleNode(nodeId) {
+        expandedNode = (expandedNode === nodeId) ? null : nodeId;
+        updateTaskDetails();
+    }
+
+    async function updateTaskDetails() {
+        if (!currentTaskId) return;
+        const res = await fetch(`/api/tasks/${currentTaskId}`);
+        const data = await res.json();
+        if (data.error) return;
+        const tree = data.tree;
+        const details = data.node_details || {};
+
+        document.getElementById('currentTitle').innerText = tree.goal || currentTaskId;
+        document.getElementById('globalStatus').innerText = tree.status;
+
+        const stopBtn = document.getElementById('stopBtn');
+        if (tree.status === 'IN_PROGRESS') {
+            stopBtn.style.display = 'inline-block';
+            stopBtn.innerText = 'СТОП';
+        } else if (tree.status === 'STOPPING...') {
+            stopBtn.style.display = 'inline-block';
+            stopBtn.innerText = 'Остановка...';
+        } else {
+            stopBtn.style.display = 'none';
+        }
+
+        document.getElementById('artifactsBox').innerText = data.artifacts?.length
+            ? `Созданные артефакты: ${data.artifacts.join(', ')}` : '';
+
+        const nodesHtml = Object.entries(tree.nodes || {}).map(([id, n]) => {
+            const det = details[id] || {};
+            const isOpen = expandedNode === id;
+            return `
+            <div class="node ${n.status}" onclick="toggleNode('${id}')">
+                <div style="display:flex; justify-content:space-between;">
+                    <strong>[${id}] ${n.title}</strong>
+                    <span class="badge">${n.status} (Попыток: ${n.attempts || 0})</span>
+                </div>
+                <div style="font-size: 12px; color: #94a3b8; margin-top: 6px;">
+                    Зависимости: ${n.dependencies?.length ? n.dependencies.join(', ') : 'нет'}
+                </div>
+                ${isOpen ? `
+                <div class="details-box" onclick="event.stopPropagation()">
+                    <div>
+                        <h4>Результат Worker</h4>
+                        <pre>${det.result || 'Нет данных'}</pre>
+                    </div>
+                    <div>
+                        <h4>Вердикт Critic</h4>
+                        <pre>${det.critique || 'Нет данных'}</pre>
+                    </div>
+                </div>` : ''}
+            </div>`;
+        }).join('');
+        document.getElementById('nodesContainer').innerHTML = nodesHtml;
+
+        const logsEl = document.getElementById('logsContainer');
+        logsEl.innerText = data.logs || 'Лог пуст...';
+        logsEl.scrollTop = logsEl.scrollHeight;
+    }
+
+    setInterval(() => {
+        if (currentTaskId) updateTaskDetails();
+    }, 2000);
+
+    fetchTasks();
+</script>
+</body>
+</html>

@@ -1,0 +1,20 @@
+# Python и виртуальное окружение
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Рабочие песочницы и логи задач
+workspace/*
+!workspace/.gitkeep
+
+# Динамическая память и временные антипаттерны
+memory/skills/*
+!memory/skills/.gitkeep
+memory/anti_patterns/*
+!memory/anti_patterns/.gitkeep
+memory/index.json
+
+# Случайные временные файлы в корне
+tree.json
+*.log
