@@ -114,5 +114,10 @@ def get_task_status(task_id: str):
                 }
 
     artifacts_dir = task_dir / "artifacts"
-    artifacts = [f.name for f in artifacts_dir.iterdir() if f.is_file()] if artifacts_dir.exists() else []
+    artifacts = {}
+    if artifacts_dir.exists():
+        for f in sorted(artifacts_dir.iterdir()):
+            if f.is_file():
+                artifacts[f.name] = f.read_text(encoding="utf-8", errors="ignore")[:8000]
+
     return {"tree": tree, "logs": logs, "node_details": node_details, "artifacts": artifacts}

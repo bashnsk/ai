@@ -26,6 +26,7 @@
         .badge { display: inline-block; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: bold; background: #334155; }
         pre { background: #020617; padding: 12px; border-radius: 6px; overflow-x: auto; font-size: 12px; max-height: 260px; overflow-y: auto; color: #a5f3fc; white-space: pre-wrap; }
         .details-box { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 10px; }
+        .artifact-card { background: #064e3b; border: 1px solid #10b981; border-radius: 6px; padding: 12px; margin-bottom: 16px; }
     </style>
 </head>
 <body>
@@ -52,7 +53,7 @@
                 <button id="stopBtn" class="btn-stop" style="display: none;" onclick="stopCurrentTask()">СТОП</button>
             </div>
         </div>
-        <div id="artifactsBox" style="margin-bottom: 12px; font-size: 13px; color: #4ade80;"></div>
+        <div id="artifactsBox"></div>
         <h3>Граф подзадач (нажмите на узел для просмотра)</h3>
         <div id="nodesContainer"></div>
         <h3>Лог событий (Live)</h3>
@@ -70,6 +71,7 @@
         document.getElementById('currentTitle').innerText = 'Выберите или создайте задачу';
         document.getElementById('globalStatus').innerText = 'IDLE';
         document.getElementById('stopBtn').style.display = 'none';
+        document.getElementById('artifactsBox').innerHTML = '';
         document.getElementById('nodesContainer').innerHTML = '';
         document.getElementById('logsContainer').innerText = 'Ожидание...';
         fetchTasks();
@@ -139,8 +141,14 @@
             stopBtn.style.display = 'none';
         }
 
-        document.getElementById('artifactsBox').innerText = data.artifacts?.length
-            ? `Созданные артефакты: ${data.artifacts.join(', ')}` : '';
+        const arts = data.artifacts || {};
+        const artKeys = Object.keys(arts);
+        document.getElementById('artifactsBox').innerHTML = artKeys.map(k => `
+            <div class="artifact-card">
+                <h4 style="color: #6ee7b7; margin-bottom: 6px;">Артефакт: ${k}</h4>
+                <pre style="max-height: 220px; margin: 0;">${arts[k]}</pre>
+            </div>
+        `).join('');
 
         const nodesHtml = Object.entries(tree.nodes || {}).map(([id, n]) => {
             const det = details[id] || {};
